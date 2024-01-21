@@ -17,6 +17,7 @@ jobs:
         target: [x86_64, x86, aarch64, armv7, s390x, ppc64le]
     steps:
       - uses: actions/checkout@v3
+      - uses: ./.github/actions/set-version
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -40,6 +41,7 @@ jobs:
         target: [x64, x86]
     steps:
       - uses: actions/checkout@v3
+      - uses: ./.github/actions/set-version
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -63,6 +65,7 @@ jobs:
         target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v3
+      - uses: ./.github/actions/set-version
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -82,6 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      - uses: ./.github/actions/set-version
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
