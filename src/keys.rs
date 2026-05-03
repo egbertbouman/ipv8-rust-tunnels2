@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyValueError, PyTypeError, PyIOError};
+use pyo3::exceptions::PyValueError;
 use openssl::asn1::Asn1Object;
 use openssl::bn::BigNum;
 use openssl::ec::{EcGroup, EcKey};
@@ -7,51 +7,7 @@ use openssl::ecdsa::EcdsaSig;
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Private, Public, Id};
 use openssl::sign::{Signer, Verifier};
-use std::fs;
-use log::info;
 
-// Helper to load private keys with DualSecret support
-fn load_private_key(data: &[u8]) -> PyResult<(PKey<Private>, Option<Vec<u8>>)> {
-    if data.starts_with(b"LibNaCLSK:") {
-        // LibNaCL DualSecret: LibNaCLSK: + crypt_sk (32) + signer_seed (32) = 74 bytes
-        if data.len() < 74 {
-            return Err(PyValueError::new_err("LibNaCLSK data too short (min 74 bytes)"));
-        }
-        let crypt_sk = data[10..42].to_vec();
-        let signer_seed = &data[42..74];
-
-        let signer_key = PKey::private_key_from_raw_bytes(signer_seed, Id::ED25519)
-            .map_err(|e| PyValueError::new_err(format!("Ed25519 load failed: {}", e)))?;
-
-        return Ok((signer_key, Some(crypt_sk)));
-    }
-
-    let pkey = if data.starts_with(b"-----") {
-        PKey::private_key_from_pem(data)
-    } else {
-        PKey::private_key_from_der(data)
-    }.map_err(|e| PyValueError::new_err(format!("Private key load failed: {}", e)))?;
-
-    Ok((pkey, None))
-}
-
-fn load_public_key(data: &[u8]) -> PyResult<(PKey<Public>, Option<Vec<u8>>)> {
-    if data.starts_with(b"LibNaCLPK:") && data.len() >= 74 {
-        // LibNaCLPK: 10 byte prefix + 32 byte crypt_pk + 32 byte vk
-        let crypt_pk = data[10..42].to_vec();
-        let vk = PKey::public_key_from_raw_bytes(&data[42..74], Id::ED25519)
-            .map_err(|e| PyValueError::new_err(format!("Verify key load failed: {}", e)))?;
-        return Ok((vk, Some(crypt_pk)));
-    }
-
-    let pkey = if data.starts_with(b"-----") {
-        PKey::public_key_from_pem(data)
-    } else {
-        PKey::public_key_from_der(data)
-    }.map_err(|e| PyValueError::new_err(format!("Public key load failed: {}", e)))?;
-
-    Ok((pkey, None))
-}
 
 #[pyclass]
 pub struct RawPublicKey {
@@ -62,14 +18,26 @@ pub struct RawPublicKey {
 #[pymethods]
 impl RawPublicKey {
     #[new]
-    #[pyo3(signature = (raw_pub_wrapper=None, keystring=None))]
-    fn new(raw_pub_wrapper: Option<Py<RawPublicKey>>, keystring: Option<&[u8]>, py: Python<'_>) -> PyResult<Self> {
-        if let Some(wrapper) = raw_pub_wrapper {
-            let b = wrapper.borrow(py);
-            return Ok(Self { inner: b.inner.clone(), crypt_pk: b.crypt_pk.clone() });
+    fn new(keystring: &[u8]) -> PyResult<Self> {
+        // LibNaCLPK: 10 byte prefix + 32 byte crypt_pk + 32 byte vk
+        if keystring.starts_with(b"LibNaCLPK:") && keystring.len() >= 74 {
+            let crypt_pk = keystring[10..42].to_vec();
+            let vk_bytes = &keystring[42..74];
+
+            let inner = PKey::public_key_from_raw_bytes(vk_bytes, Id::ED25519)
+                .map_err(|e| PyValueError::new_err(format!("Verify key load failed: {}", e)))?;
+
+            return Ok(Self { inner, crypt_pk: Some(crypt_pk) });
         }
-        let (inner, crypt_pk) = load_public_key(keystring.ok_or_else(|| PyTypeError::new_err("Missing keystring"))?)?;
-        Ok(Self { inner, crypt_pk })
+
+        // OpenSSL PEM/DER
+        let inner = if keystring.starts_with(b"-----") {
+            PKey::public_key_from_pem(keystring)
+        } else {
+            PKey::public_key_from_der(keystring)
+        }.map_err(|e| PyValueError::new_err(format!("Public key load failed: {}", e)))?;
+
+        Ok(Self { inner, crypt_pk: None })
     }
 
     fn verify(&self, signature: &[u8], msg: &[u8]) -> bool {
@@ -125,21 +93,26 @@ pub struct RawPrivateKey {
 #[pymethods]
 impl RawPrivateKey {
     #[new]
-    #[pyo3(signature = (raw_priv_wrapper=None, keystring=None, filename=None))]
-    fn new(raw_priv_wrapper: Option<Py<RawPrivateKey>>, keystring: Option<&[u8]>, filename: Option<String>, py: Python<'_>) -> PyResult<Self> {
-        if let Some(wrapper) = raw_priv_wrapper {
-            let b = wrapper.borrow(py);
-            return Ok(RawPrivateKey { inner: b.inner.clone(), crypt_sk: b.crypt_sk.clone() });
+    fn new(keystring: &[u8]) -> PyResult<Self> {
+        // LibNaCL DualSecret: LibNaCLSK: + crypt_sk (32) + signer_seed (32) = 74 bytes
+        if keystring.starts_with(b"LibNaCLSK:") && keystring.len() >= 74 {
+            let crypt_sk = keystring[10..42].to_vec();
+            let signer_seed = &keystring[42..74];
+
+            let inner = PKey::private_key_from_raw_bytes(signer_seed, Id::ED25519)
+                .map_err(|e| PyValueError::new_err(format!("Ed25519 load failed: {}", e)))?;
+
+            return Ok(Self { inner, crypt_sk: Some(crypt_sk) });
         }
 
-        let data = match (filename, keystring) {
-            (Some(path), _) => fs::read(path).map_err(|e| PyIOError::new_err(e.to_string()))?,
-            (_, Some(bytes)) => bytes.to_vec(),
-            _ => return Err(PyTypeError::new_err("Provide RawPrivateKey, keystring, or filename")),
-        };
+        // OpenSSL PEM/DER
+        let inner = if keystring.starts_with(b"-----") {
+            PKey::private_key_from_pem(keystring)
+        } else {
+            PKey::private_key_from_der(keystring)
+        }.map_err(|e| PyValueError::new_err(format!("Private key load failed: {}", e)))?;
 
-        let (inner, crypt_sk) = load_private_key(&data)?;
-        Ok(RawPrivateKey { inner, crypt_sk })
+        Ok(Self { inner, crypt_sk: None })
     }
 
     fn key_to_bin(&mut self) -> PyResult<Vec<u8>> {
