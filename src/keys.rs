@@ -35,21 +35,28 @@ fn load_private_key(data: &[u8]) -> PyResult<(PKey<Private>, Option<Vec<u8>>)> {
     Ok((pkey, None))
 }
 
-fn load_public_key(data: &[u8]) -> PyResult<PKey<Public>> {
-    if data.starts_with(b"LibNaCLPK:") {
-        // LibNaCLPK: + pk (32) + vk (32). We use the first 32 bytes (pk).
-        let pk = data.get(10..42).ok_or_else(|| PyValueError::new_err("LibNaCLPK too short"))?;
-        PKey::public_key_from_raw_bytes(pk, Id::ED25519)
-    } else if data.starts_with(b"-----") {
+fn load_public_key(data: &[u8]) -> PyResult<(PKey<Public>, Option<Vec<u8>>)> {
+    if data.starts_with(b"LibNaCLPK:") && data.len() >= 74 {
+        // LibNaCLPK: 10 byte prefix + 32 byte crypt_pk + 32 byte vk
+        let crypt_pk = data[10..42].to_vec();
+        let vk = PKey::public_key_from_raw_bytes(&data[42..74], Id::ED25519)
+            .map_err(|e| PyValueError::new_err(format!("Verify key load failed: {}", e)))?;
+        return Ok((vk, Some(crypt_pk)));
+    }
+
+    let pkey = if data.starts_with(b"-----") {
         PKey::public_key_from_pem(data)
     } else {
         PKey::public_key_from_der(data)
-    }.map_err(|e| PyValueError::new_err(format!("Public key load failed: {}", e)))
+    }.map_err(|e| PyValueError::new_err(format!("Public key load failed: {}", e)))?;
+
+    Ok((pkey, None))
 }
 
 #[pyclass]
 pub struct RawPublicKey {
-    pub inner: PKey<Public>,
+    pub inner: PKey<Public>, // Verify Key (vk)
+    pub crypt_pk: Option<Vec<u8>>, // Encryption Key (pk)
 }
 
 #[pymethods]
@@ -58,12 +65,11 @@ impl RawPublicKey {
     #[pyo3(signature = (raw_pub_wrapper=None, keystring=None))]
     fn new(raw_pub_wrapper: Option<Py<RawPublicKey>>, keystring: Option<&[u8]>, py: Python<'_>) -> PyResult<Self> {
         if let Some(wrapper) = raw_pub_wrapper {
-            return Ok(RawPublicKey { inner: wrapper.borrow(py).inner.clone() });
+            let b = wrapper.borrow(py);
+            return Ok(Self { inner: b.inner.clone(), crypt_pk: b.crypt_pk.clone() });
         }
-        if let Some(data) = keystring {
-            return Ok(RawPublicKey { inner: load_public_key(data)? });
-        }
-        Err(PyTypeError::new_err("Must provide a RawPublicKey or keystring"))
+        let (inner, crypt_pk) = load_public_key(keystring.ok_or_else(|| PyTypeError::new_err("Missing keystring"))?)?;
+        Ok(Self { inner, crypt_pk })
     }
 
     fn verify(&self, signature: &[u8], msg: &[u8]) -> bool {
@@ -94,11 +100,11 @@ impl RawPublicKey {
     }
 
     fn key_to_bin(&self) -> PyResult<Vec<u8>> {
-        if matches!(self.inner.id().as_raw(), 894 | 1087) {
-            let pk = self.inner.raw_public_key()
-                .or_else(|_| self.inner.public_key_to_der().map(|d| d[d.len()-32..].to_vec()))
-                .map_err(|e| PyValueError::new_err(e.to_string()))?;
-            return Ok([b"LibNaCLPK:".as_slice(), &pk, &pk].concat());
+        if self.inner.id() == Id::ED25519 {
+            let vk = self.inner.raw_public_key().map_err(|e| PyValueError::new_err(e.to_string()))?;
+            // Use crypt_pk (Encryption PK) if available, otherwise default to vk
+            let pk = self.crypt_pk.as_ref().unwrap_or(&vk);
+            return Ok([b"LibNaCLPK:".as_slice(), pk, &vk].concat());
         }
         self.inner.public_key_to_der().map_err(|e| PyValueError::new_err(e.to_string()))
     }
@@ -154,10 +160,17 @@ impl RawPrivateKey {
 
     #[pyo3(name = "pub")]
     fn public_key(&self) -> PyResult<RawPublicKey> {
-        self.inner.public_key_to_der()
+        let vk_inner = self.inner.public_key_to_der()
             .and_then(|der| PKey::public_key_from_der(&der))
-            .map(|inner| RawPublicKey { inner })
-            .map_err(|e| PyValueError::new_err(e.to_string()))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        // Derive crypt_pk from crypt_sk if we are in an Ed25519/DualSecret context
+        let crypt_pk = self.crypt_sk.as_ref().and_then(|sk| {
+            PKey::private_key_from_raw_bytes(sk, Id::X25519)
+                .and_then(|k| k.raw_public_key()).ok()
+        });
+
+        Ok(RawPublicKey { inner: vk_inner, crypt_pk })
     }
 
     fn key_to_pem(&self) -> PyResult<Vec<u8>> {
@@ -201,33 +214,25 @@ impl RawPrivateKey {
 
     #[staticmethod]
     fn generate(curve_name: &str) -> PyResult<Self> {
-        let (inner, crypt_sk) = if curve_name.to_lowercase() == "ed25519" {
-            // 1. Genereer de Signer (Ed25519)
-            let signer_key = PKey::generate_ed25519()
-                .map_err(|e| PyValueError::new_err(format!("Ed25519 gen failed: {}", e)))?;
-
-            // 2. Genereer een VOLLEDIG APARTE Crypt key (X25519)
-            // Dit komt overeen met self.crypt = libnacl.public.SecretKey()
-            let crypt_key = PKey::generate_x25519()
-                .map_err(|e| PyValueError::new_err(format!("X25519 gen failed: {}", e)))?;
-
-            // Extraheer de ruwe bytes van de X25519 key voor opslag in crypt_sk
-            let crypt_sk_bytes = crypt_key.raw_private_key()
+        if curve_name.to_lowercase() == "ed25519" {
+            let signer = PKey::generate_ed25519()
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let crypt = PKey::generate_x25519()
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let crypt_sk_bytes = crypt.raw_private_key()
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-            return Ok(RawPrivateKey {
-                inner: signer_key,
-                crypt_sk: Some(crypt_sk_bytes)
-            });
-        } else {
-            let res = (|| {
-                let nid = Asn1Object::from_str(curve_name)?.nid();
-                let group = EcGroup::from_curve_name(nid)?;
-                let ec_key = EcKey::generate(&group)?;
-                PKey::from_ec_key(ec_key)
-            })().map_err(|e| PyValueError::new_err(e.to_string()))?;
-            (res, None)
-        };
-        Ok(RawPrivateKey { inner, crypt_sk })
+            return Ok(RawPrivateKey { inner: signer,  crypt_sk: Some(crypt_sk_bytes) });
+        }
+
+        // For non-ed25519 curves
+        let inner = (|| {
+            let nid = Asn1Object::from_str(curve_name)?.nid();
+            let group = EcGroup::from_curve_name(nid)?;
+            let ec_key = EcKey::generate(&group)?;
+            PKey::from_ec_key(ec_key)
+        })().map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(RawPrivateKey { inner, crypt_sk: None })
     }
 }
