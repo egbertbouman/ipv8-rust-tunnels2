@@ -48,23 +48,21 @@ impl RawPublicKey {
         }
 
         // NOTE: Not using SHA-256 + DER due to legacy reasons.
-        let total_len = signature.len();
-        if total_len == 0 || total_len % 2 != 0 { return false; }
+        let mid = signature.len() / 2;
+        if signature.is_empty() || signature.len() % 2 != 0 { return false; }
 
-        let mid = total_len / 2;
-        let r_bn = BigNum::from_slice(&signature[..mid]).ok();
-        let s_bn = BigNum::from_slice(&signature[mid..]).ok();
+        // Use a closure returning OpenSSL's own ErrorStack to use the '?' operator
+        let res: Result<bool, openssl::error::ErrorStack> = (|| {
+            let r = BigNum::from_slice(&signature[..mid])?;
+            let s = BigNum::from_slice(&signature[mid..])?;
+            let sig = EcdsaSig::from_private_components(r, s)?;
+            let ec = self.inner.ec_key()?;
+            let digest = openssl::hash::hash(MessageDigest::sha1(), msg)?;
 
-        if let (Some(r), Some(s)) = (r_bn, s_bn) {
-            if let Ok(sig) = EcdsaSig::from_private_components(r, s) {
-                if let Ok(ec_key) = self.inner.ec_key() {
-                    if let Ok(digest) = openssl::hash::hash(MessageDigest::sha1(), msg) {
-                        return sig.verify(&digest, &ec_key).unwrap_or(false);
-                    }
-                }
-            }
-        }
-        false
+            Ok(sig.verify(&digest, &ec)?)
+        })();
+
+        res.unwrap_or(false)
     }
 
     fn key_to_bin(&self) -> PyResult<Vec<u8>> {
@@ -161,26 +159,18 @@ impl RawPrivateKey {
         }
 
         // NOTE: Not using SHA-256 + DER due to legacy reasons.
-        let mut signer = Signer::new(MessageDigest::sha1(), &self.inner)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        signer.update(msg).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let der_sig = signer.sign_to_vec().map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        let sig = EcdsaSig::from_der(&der_sig)
-            .map_err(|e| PyValueError::new_err(format!("Sig decode error: {}", e)))?;
-
-        let field_len = self.inner.size();
-        let mut raw_sig = vec![0u8; field_len * 2];
-
-        let r_bytes = sig.r().to_vec_padded(field_len as i32)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let s_bytes = sig.s().to_vec_padded(field_len as i32)
+        let der_sig = Signer::new(MessageDigest::sha1(), &self.inner)
+            .and_then(|mut s| s.sign_oneshot_to_vec(msg))
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        raw_sig[..field_len].copy_from_slice(&r_bytes);
-        raw_sig[field_len..].copy_from_slice(&s_bytes);
+        let sig = EcdsaSig::from_der(&der_sig).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let len = self.inner.size();
+        let mut raw = vec![0u8; len * 2];
 
-        Ok(raw_sig)
+        raw[..len].copy_from_slice(&sig.r().to_vec_padded(len as i32).map_err(|e| PyValueError::new_err(e.to_string()))?);
+        raw[len..].copy_from_slice(&sig.s().to_vec_padded(len as i32).map_err(|e| PyValueError::new_err(e.to_string()))?);
+
+        Ok(raw)
     }
 
     fn get_signature_length(&self) -> usize { self.inner.size() * 2 }
@@ -208,4 +198,19 @@ impl RawPrivateKey {
 
         Ok(RawPrivateKey { inner, crypt_sk: None })
     }
+}
+
+#[pyfunction]
+pub fn generate_safe_prime(py: Python<'_>, bit_length: i32) -> PyResult<PyObject> {
+    let mut prime = BigNum::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+    prime.generate_prime(bit_length, true, None, None)
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to generate safe prime: {}", e)))?;
+
+    // Convert to bytes first because Rust's native integer types (up to u128) cannot hold large cryptographic primes.
+    let bytes = prime.to_vec();
+    let int_val = py.get_type::<PyLong>()
+        .call_method1("from_bytes", (bytes, "big"))?;
+
+    Ok(int_val.to_object(py))
 }
