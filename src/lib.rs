@@ -20,6 +20,7 @@ use std::{
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 
+use crate::keys::{generate_safe_prime, RawPrivateKey, RawPublicKey};
 use crate::packet::is_cell;
 use crate::payload::Address;
 use crate::routing::table::RoutingTable;
@@ -27,6 +28,8 @@ use crate::socks5::Socks5Server;
 use crate::task_manager::TaskManager;
 
 mod crypto;
+mod dh;
+mod keys;
 mod packet;
 mod payload;
 mod request_cache;
@@ -600,12 +603,22 @@ impl Endpoint {
 }
 
 #[pymodule]
-#[pyo3(name = "rust_endpoint")]
-pub fn ipv8_rust_tunnels(py: Python, module: &Bound<'_, PyModule>) -> PyResult<()> {
-    env_logger::init();
-    module.add("RustError", py.get_type::<RustError>())?;
-    module.add_class::<Endpoint>()?;
-    module.add("__version__", env!("CARGO_PKG_VERSION"))?;
+pub fn _rust(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let _ = env_logger::try_init();
+
+    m.add_class::<Endpoint>()?;
+    m.add("RustError", py.get_type::<RustError>())?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+
+    m.add_class::<RawPublicKey>()?;
+    m.add_class::<RawPrivateKey>()?;
+    m.add_function(wrap_pyfunction!(generate_safe_prime, m)?)?;
+
+    m.add_class::<dh::SessionKeys>()?;
+    m.add_function(wrap_pyfunction!(dh::generate_session_keys, m)?)?;
+    m.add_function(wrap_pyfunction!(dh::crypto_auth, m)?)?;
+    m.add_function(wrap_pyfunction!(dh::crypto_auth_verify, m)?)?;
+
     Ok(())
 }
 

@@ -1,18 +1,18 @@
-use pyo3::prelude::*;
-use pyo3::exceptions::PyValueError;
 use openssl::asn1::Asn1Object;
 use openssl::bn::BigNum;
 use openssl::ec::{EcGroup, EcKey};
 use openssl::ecdsa::EcdsaSig;
 use openssl::hash::MessageDigest;
-use openssl::pkey::{PKey, Private, Public, Id};
+use openssl::pkey::{Id, PKey, Private, Public};
 use openssl::sign::{Signer, Verifier};
-
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::prelude::*;
+use pyo3::types::PyInt;
 
 #[pyclass]
 pub struct RawPublicKey {
-    pub inner: PKey<Public>, // Verify Key (vk)
-    pub crypt_pk: Option<Vec<u8>>, // Encryption Key (pk)
+    pub inner: PKey<Public>,
+    pub crypt_pk: Option<Vec<u8>>,
 }
 
 #[pymethods]
@@ -27,7 +27,10 @@ impl RawPublicKey {
             let inner = PKey::public_key_from_raw_bytes(vk_bytes, Id::ED25519)
                 .map_err(|e| PyValueError::new_err(format!("Verify key load failed: {}", e)))?;
 
-            return Ok(Self { inner, crypt_pk: Some(crypt_pk) });
+            return Ok(Self {
+                inner,
+                crypt_pk: Some(crypt_pk),
+            });
         }
 
         // OpenSSL PEM/DER
@@ -35,9 +38,13 @@ impl RawPublicKey {
             PKey::public_key_from_pem(keystring)
         } else {
             PKey::public_key_from_der(keystring)
-        }.map_err(|e| PyValueError::new_err(format!("Public key load failed: {}", e)))?;
+        }
+        .map_err(|e| PyValueError::new_err(format!("Public key load failed: {}", e)))?;
 
-        Ok(Self { inner, crypt_pk: None })
+        Ok(Self {
+            inner,
+            crypt_pk: None,
+        })
     }
 
     fn verify(&self, signature: &[u8], msg: &[u8]) -> bool {
@@ -47,11 +54,11 @@ impl RawPublicKey {
                 .unwrap_or(false);
         }
 
-        // NOTE: Not using SHA-256 + DER due to legacy reasons.
         let mid = signature.len() / 2;
-        if signature.is_empty() || signature.len() % 2 != 0 { return false; }
+        if signature.is_empty() || signature.len() % 2 != 0 {
+            return false;
+        }
 
-        // Use a closure returning OpenSSL's own ErrorStack to use the '?' operator
         let res: Result<bool, openssl::error::ErrorStack> = (|| {
             let r = BigNum::from_slice(&signature[..mid])?;
             let s = BigNum::from_slice(&signature[mid..])?;
@@ -67,25 +74,34 @@ impl RawPublicKey {
 
     fn key_to_bin(&self) -> PyResult<Vec<u8>> {
         if self.inner.id() == Id::ED25519 {
-            let vk = self.inner.raw_public_key().map_err(|e| PyValueError::new_err(e.to_string()))?;
-            // Use crypt_pk (Encryption PK) if available, otherwise default to vk
+            let vk = self
+                .inner
+                .raw_public_key()
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            // Use crypt_pk if available, otherwise default to vk
             let pk = self.crypt_pk.as_ref().unwrap_or(&vk);
             return Ok([b"LibNaCLPK:".as_slice(), pk, &vk].concat());
         }
-        self.inner.public_key_to_der().map_err(|e| PyValueError::new_err(e.to_string()))
+        self.inner
+            .public_key_to_der()
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     fn key_to_pem(&self) -> PyResult<Vec<u8>> {
-        self.inner.public_key_to_pem().map_err(|e| PyValueError::new_err(e.to_string()))
+        self.inner
+            .public_key_to_pem()
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
-    fn get_signature_length(&self) -> usize { self.inner.size() * 2 }
+    fn get_signature_length(&self) -> usize {
+        self.inner.size() * 2
+    }
 }
 
 #[pyclass]
 pub struct RawPrivateKey {
     pub inner: PKey<Private>,
-    pub crypt_sk: Option<Vec<u8>>, // Stores the independent Curve25519 part if loaded from DualSecret
+    pub crypt_sk: Option<Vec<u8>>, // Curve25519
 }
 
 #[pymethods]
@@ -100,7 +116,10 @@ impl RawPrivateKey {
             let inner = PKey::private_key_from_raw_bytes(signer_seed, Id::ED25519)
                 .map_err(|e| PyValueError::new_err(format!("Ed25519 load failed: {}", e)))?;
 
-            return Ok(Self { inner, crypt_sk: Some(crypt_sk) });
+            return Ok(Self {
+                inner,
+                crypt_sk: Some(crypt_sk),
+            });
         }
 
         // OpenSSL PEM/DER
@@ -108,16 +127,23 @@ impl RawPrivateKey {
             PKey::private_key_from_pem(keystring)
         } else {
             PKey::private_key_from_der(keystring)
-        }.map_err(|e| PyValueError::new_err(format!("Private key load failed: {}", e)))?;
+        }
+        .map_err(|e| PyValueError::new_err(format!("Private key load failed: {}", e)))?;
 
-        Ok(Self { inner, crypt_sk: None })
+        Ok(Self {
+            inner,
+            crypt_sk: None,
+        })
     }
 
     fn key_to_bin(&mut self) -> PyResult<Vec<u8>> {
         if self.inner.id() == Id::ED25519 {
-            let seed = self.inner.raw_private_key().map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let seed = self
+                .inner
+                .raw_private_key()
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-            // Ensure crypt_sk exists for DualSecret; generate independent X25519 key if missing
+            // Ensure crypt_sk exists.
             let sk = self.crypt_sk.get_or_insert_with(|| {
                 PKey::generate_x25519()
                     .and_then(|k| k.raw_private_key())
@@ -126,29 +152,42 @@ impl RawPrivateKey {
 
             return Ok([b"LibNaCLSK:".as_slice(), sk, &seed].concat());
         }
-        self.inner.private_key_to_der().map_err(|e| PyValueError::new_err(e.to_string()))
+        self.inner
+            .private_key_to_der()
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     #[pyo3(name = "pub")]
     fn public_key(&self) -> PyResult<RawPublicKey> {
-        let vk_inner = self.inner.public_key_to_der()
+        let vk_inner = self
+            .inner
+            .public_key_to_der()
             .and_then(|der| PKey::public_key_from_der(&der))
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        // Derive crypt_pk from crypt_sk if we are in an Ed25519/DualSecret context
         let crypt_pk = self.crypt_sk.as_ref().and_then(|sk| {
             PKey::private_key_from_raw_bytes(sk, Id::X25519)
-                .and_then(|k| k.raw_public_key()).ok()
+                .and_then(|k| k.raw_public_key())
+                .ok()
         });
 
-        Ok(RawPublicKey { inner: vk_inner, crypt_pk })
+        Ok(RawPublicKey {
+            inner: vk_inner,
+            crypt_pk,
+        })
     }
 
     fn key_to_pem(&self) -> PyResult<Vec<u8>> {
         if self.inner.id() == Id::ED25519 {
-            return self.inner.private_key_to_pem_pkcs8().map_err(|e| PyValueError::new_err(e.to_string()));
+            return self
+                .inner
+                .private_key_to_pem_pkcs8()
+                .map_err(|e| PyValueError::new_err(e.to_string()));
         }
-        self.inner.ec_key().and_then(|ec| ec.private_key_to_pem()).map_err(|e| PyValueError::new_err(e.to_string()))
+        self.inner
+            .ec_key()
+            .and_then(|ec| ec.private_key_to_pem())
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     fn signature(&self, msg: &[u8]) -> PyResult<Vec<u8>> {
@@ -158,7 +197,7 @@ impl RawPrivateKey {
                 .map_err(|e| PyValueError::new_err(format!("Ed25519 sign failed: {}", e)));
         }
 
-        // NOTE: Not using SHA-256 + DER due to legacy reasons.
+        // NOTE: Legacy signature.
         let der_sig = Signer::new(MessageDigest::sha1(), &self.inner)
             .and_then(|mut s| s.sign_oneshot_to_vec(msg))
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -167,25 +206,37 @@ impl RawPrivateKey {
         let len = self.inner.size();
         let mut raw = vec![0u8; len * 2];
 
-        raw[..len].copy_from_slice(&sig.r().to_vec_padded(len as i32).map_err(|e| PyValueError::new_err(e.to_string()))?);
-        raw[len..].copy_from_slice(&sig.s().to_vec_padded(len as i32).map_err(|e| PyValueError::new_err(e.to_string()))?);
+        raw[..len].copy_from_slice(
+            &sig.r()
+                .to_vec_padded(len as i32)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?,
+        );
+        raw[len..].copy_from_slice(
+            &sig.s()
+                .to_vec_padded(len as i32)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?,
+        );
 
         Ok(raw)
     }
 
-    fn get_signature_length(&self) -> usize { self.inner.size() * 2 }
+    fn get_signature_length(&self) -> usize {
+        self.inner.size() * 2
+    }
 
     #[staticmethod]
     fn generate(curve_name: &str) -> PyResult<Self> {
         if curve_name.to_lowercase() == "ed25519" {
-            let signer = PKey::generate_ed25519()
-                .map_err(|e| PyValueError::new_err(e.to_string()))?;
-            let crypt = PKey::generate_x25519()
-                .map_err(|e| PyValueError::new_err(e.to_string()))?;
-            let crypt_sk_bytes = crypt.raw_private_key()
+            let signer = PKey::generate_ed25519().map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let crypt = PKey::generate_x25519().map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let crypt_sk_bytes = crypt
+                .raw_private_key()
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-            return Ok(RawPrivateKey { inner: signer,  crypt_sk: Some(crypt_sk_bytes) });
+            return Ok(RawPrivateKey {
+                inner: signer,
+                crypt_sk: Some(crypt_sk_bytes),
+            });
         }
 
         // For non-ed25519 curves
@@ -194,9 +245,43 @@ impl RawPrivateKey {
             let group = EcGroup::from_curve_name(nid)?;
             let ec_key = EcKey::generate(&group)?;
             PKey::from_ec_key(ec_key)
-        })().map_err(|e| PyValueError::new_err(e.to_string()))?;
+        })()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        Ok(RawPrivateKey { inner, crypt_sk: None })
+        Ok(RawPrivateKey {
+            inner,
+            crypt_sk: None,
+        })
+    }
+
+    fn diffie_hellman(&self, peer_public_key: &[u8]) -> PyResult<Vec<u8>> {
+        let sk_bytes = self
+            .crypt_sk
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("No crypt_sk"))?;
+
+        (|| -> Result<Vec<u8>, openssl::error::ErrorStack> {
+            let my_sk = PKey::private_key_from_raw_bytes(sk_bytes, Id::X25519)?;
+            let peer_pk = PKey::public_key_from_raw_bytes(peer_public_key, Id::X25519)?;
+
+            let mut deriver = openssl::derive::Deriver::new(&my_sk)?;
+            deriver.set_peer(&peer_pk)?;
+            deriver.derive_to_vec()
+        })()
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    fn get_crypt_pk(&self) -> PyResult<Vec<u8>> {
+        let sk_bytes = self
+            .crypt_sk
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("No crypt_sk"))?;
+
+        (|| -> Result<Vec<u8>, openssl::error::ErrorStack> {
+            let sk = PKey::private_key_from_raw_bytes(sk_bytes, Id::X25519)?;
+            sk.raw_public_key()
+        })()
+        .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 }
 
@@ -204,13 +289,14 @@ impl RawPrivateKey {
 pub fn generate_safe_prime(py: Python<'_>, bit_length: i32) -> PyResult<PyObject> {
     let mut prime = BigNum::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
-    prime.generate_prime(bit_length, true, None, None)
+    prime
+        .generate_prime(bit_length, true, None, None)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to generate safe prime: {}", e)))?;
 
-    // Convert to bytes first because Rust's native integer types (up to u128) cannot hold large cryptographic primes.
     let bytes = prime.to_vec();
-    let int_val = py.get_type::<PyLong>()
+    let int_val = py
+        .get_type::<PyInt>()
         .call_method1("from_bytes", (bytes, "big"))?;
 
-    Ok(int_val.to_object(py))
+    Ok(int_val.into())
 }
