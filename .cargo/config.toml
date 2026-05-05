@@ -1,4 +1,5 @@
 [build]
 rustflags = [
+    "-C", "target-feature=+crt-static",
     "--cfg", "tokio_unstable"
 ]
