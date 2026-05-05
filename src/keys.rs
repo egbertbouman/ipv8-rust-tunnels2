@@ -10,13 +10,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyInt;
 
 #[pyclass]
-pub struct RawPublicKey {
+pub struct PublicKey {
     pub inner: PKey<Public>,
     pub crypt_pk: Option<Vec<u8>>,
 }
 
 #[pymethods]
-impl RawPublicKey {
+impl PublicKey {
     #[new]
     fn new(keystring: &[u8]) -> PyResult<Self> {
         // LibNaCLPK: 10 byte prefix + 32 byte crypt_pk + 32 byte vk
@@ -99,13 +99,13 @@ impl RawPublicKey {
 }
 
 #[pyclass]
-pub struct RawPrivateKey {
+pub struct PrivateKey {
     pub inner: PKey<Private>,
     pub crypt_sk: Option<Vec<u8>>, // Curve25519
 }
 
 #[pymethods]
-impl RawPrivateKey {
+impl PrivateKey {
     #[new]
     fn new(keystring: &[u8]) -> PyResult<Self> {
         // LibNaCL DualSecret: LibNaCLSK: + crypt_sk (32) + signer_seed (32) = 74 bytes
@@ -158,7 +158,7 @@ impl RawPrivateKey {
     }
 
     #[pyo3(name = "pub")]
-    fn public_key(&self) -> PyResult<RawPublicKey> {
+    fn public_key(&self) -> PyResult<PublicKey> {
         let vk_inner = self
             .inner
             .public_key_to_der()
@@ -171,7 +171,7 @@ impl RawPrivateKey {
                 .ok()
         });
 
-        Ok(RawPublicKey {
+        Ok(PublicKey {
             inner: vk_inner,
             crypt_pk,
         })
@@ -233,7 +233,7 @@ impl RawPrivateKey {
                 .raw_private_key()
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-            return Ok(RawPrivateKey {
+            return Ok(PrivateKey {
                 inner: signer,
                 crypt_sk: Some(crypt_sk_bytes),
             });
@@ -248,7 +248,7 @@ impl RawPrivateKey {
         })()
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        Ok(RawPrivateKey {
+        Ok(PrivateKey {
             inner,
             crypt_sk: None,
         })

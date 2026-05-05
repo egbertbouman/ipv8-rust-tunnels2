@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections import UserDict
 from typing import Callable, TYPE_CHECKING
 
@@ -8,14 +9,16 @@ if TYPE_CHECKING:
     from ipv8.messaging.anonymization.payload import CellPayload
     from ipv8.messaging.interfaces.udp.endpoint import Address
 
-import asyncio
-
-import ipv8_rust_tunnels.rust_endpoint as rust
+from . import _rust as rust
 
 from ipv8.messaging.anonymization.crypto import CryptoEndpoint
 from ipv8.messaging.interfaces.endpoint import EndpointListener
 from ipv8.messaging.interfaces.network_stats import NetworkStat
-from ipv8.messaging.interfaces.udp.endpoint import Endpoint, EndpointClosedException, UDPv4Address
+from ipv8.messaging.interfaces.udp.endpoint import (
+    Endpoint as IPv8Endpoint, 
+    EndpointClosedException, 
+    UDPv4Address
+)
 from ipv8.taskmanager import TaskManager
 from ipv8.util import succeed
 
@@ -43,7 +46,7 @@ class ShadowDict(UserDict):
         self.remover(key)
 
 
-class RustEndpoint(CryptoEndpoint, Endpoint, TaskManager):
+class Endpoint(CryptoEndpoint, IPv8Endpoint, TaskManager):
     """
     UDP endpoint implemented in Rust capable of sending/relaying/exiting CellPayloads.
     """
@@ -53,7 +56,7 @@ class RustEndpoint(CryptoEndpoint, Endpoint, TaskManager):
         Create a new RustEndpoint.
         """
         CryptoEndpoint.__init__(self)
-        Endpoint.__init__(self)
+        IPv8Endpoint.__init__(self)
         TaskManager.__init__(self)
         self.rust_ep = ep = rust.Endpoint(ip, port)
         self.worker_threads = worker_threads

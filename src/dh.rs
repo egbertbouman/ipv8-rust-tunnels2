@@ -6,10 +6,10 @@ use openssl::sign::Signer;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::keys::RawPrivateKey;
+use crate::keys::{PrivateKey, PublicKey};
 
 #[pymethods]
-impl RawPrivateKey {
+impl PrivateKey {
     fn diffie_hellman(&self, peer_public_key: &[u8]) -> PyResult<Vec<u8>> {
         let sk_bytes = self
             .crypt_sk
@@ -38,6 +38,16 @@ impl RawPrivateKey {
             sk.raw_public_key()
         })()
         .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+}
+
+#[pymethods]
+impl PublicKey {
+    fn get_crypt_pk(&self) -> PyResult<Vec<u8>> {
+        self.crypt_pk
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| PyValueError::new_err("No crypt_pk available for this key type"))
     }
 }
 

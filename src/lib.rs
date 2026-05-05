@@ -20,7 +20,6 @@ use std::{
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 
-use crate::keys::{generate_safe_prime, RawPrivateKey, RawPublicKey};
 use crate::packet::is_cell;
 use crate::payload::Address;
 use crate::routing::table::RoutingTable;
@@ -44,8 +43,8 @@ mod util;
 #[macro_use]
 extern crate log;
 
-create_exception!(ipv8_rust_tunnels, EndpointNotOpenError, PyException);
-create_exception!(ipv8_rust_tunnels, InvalidAddressError, PyValueError);
+create_exception!(_rust, EndpointNotOpenError, PyException);
+create_exception!(_rust, InvalidAddressError, PyValueError);
 
 #[pyclass]
 pub struct Endpoint {
@@ -612,9 +611,9 @@ pub fn _rust(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("InvalidAddressError", py.get_type::<InvalidAddressError>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
-    m.add_class::<RawPublicKey>()?;
-    m.add_class::<RawPrivateKey>()?;
-    m.add_function(wrap_pyfunction!(generate_safe_prime, m)?)?;
+    m.add_class::<keys::PublicKey>()?;
+    m.add_class::<keys::PrivateKey>()?;
+    m.add_function(wrap_pyfunction!(keys::generate_safe_prime, m)?)?;
 
     m.add_class::<dh::SessionKeys>()?;
     m.add_function(wrap_pyfunction!(dh::generate_session_keys, m)?)?;
