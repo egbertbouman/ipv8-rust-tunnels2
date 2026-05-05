@@ -239,7 +239,7 @@ impl RawPrivateKey {
             });
         }
 
-        // For non-ed25519 curves
+        // For legacy/non-ed25519 curves
         let inner = (|| {
             let nid = Asn1Object::from_str(curve_name)?.nid();
             let group = EcGroup::from_curve_name(nid)?;
@@ -252,36 +252,6 @@ impl RawPrivateKey {
             inner,
             crypt_sk: None,
         })
-    }
-
-    fn diffie_hellman(&self, peer_public_key: &[u8]) -> PyResult<Vec<u8>> {
-        let sk_bytes = self
-            .crypt_sk
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("No crypt_sk"))?;
-
-        (|| -> Result<Vec<u8>, openssl::error::ErrorStack> {
-            let my_sk = PKey::private_key_from_raw_bytes(sk_bytes, Id::X25519)?;
-            let peer_pk = PKey::public_key_from_raw_bytes(peer_public_key, Id::X25519)?;
-
-            let mut deriver = openssl::derive::Deriver::new(&my_sk)?;
-            deriver.set_peer(&peer_pk)?;
-            deriver.derive_to_vec()
-        })()
-        .map_err(|e| PyValueError::new_err(e.to_string()))
-    }
-
-    fn get_crypt_pk(&self) -> PyResult<Vec<u8>> {
-        let sk_bytes = self
-            .crypt_sk
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("No crypt_sk"))?;
-
-        (|| -> Result<Vec<u8>, openssl::error::ErrorStack> {
-            let sk = PKey::private_key_from_raw_bytes(sk_bytes, Id::X25519)?;
-            sk.raw_public_key()
-        })()
-        .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 }
 

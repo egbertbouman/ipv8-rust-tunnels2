@@ -6,21 +6,39 @@ use openssl::sign::Signer;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-#[pyclass]
-#[derive(Clone)]
-pub struct SessionKeys {
-    #[pyo3(get, set)]
-    pub kf: Vec<u8>,
-    #[pyo3(get, set)]
-    pub kb: Vec<u8>,
-    #[pyo3(get, set)]
-    pub sf: Vec<u8>,
-    #[pyo3(get, set)]
-    pub sb: Vec<u8>,
-    #[pyo3(get, set)]
-    pub counter_f: u32,
-    #[pyo3(get, set)]
-    pub counter_b: u32,
+use crate::keys::RawPrivateKey;
+
+#[pymethods]
+impl RawPrivateKey {
+    fn diffie_hellman(&self, peer_public_key: &[u8]) -> PyResult<Vec<u8>> {
+        let sk_bytes = self
+            .crypt_sk
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("No crypt_sk"))?;
+
+        (|| -> Result<Vec<u8>, openssl::error::ErrorStack> {
+            let my_sk = PKey::private_key_from_raw_bytes(sk_bytes, Id::X25519)?;
+            let peer_pk = PKey::public_key_from_raw_bytes(peer_public_key, Id::X25519)?;
+
+            let mut deriver = openssl::derive::Deriver::new(&my_sk)?;
+            deriver.set_peer(&peer_pk)?;
+            deriver.derive_to_vec()
+        })()
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    fn get_crypt_pk(&self) -> PyResult<Vec<u8>> {
+        let sk_bytes = self
+            .crypt_sk
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("No crypt_sk"))?;
+
+        (|| -> Result<Vec<u8>, openssl::error::ErrorStack> {
+            let sk = PKey::private_key_from_raw_bytes(sk_bytes, Id::X25519)?;
+            sk.raw_public_key()
+        })()
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
 }
 
 #[pyfunction]
@@ -45,6 +63,23 @@ pub fn crypto_auth_verify(tag: &[u8], key: &[u8], message: &[u8]) -> bool {
         return openssl::memcmp::eq(&computed, tag);
     }
     false
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SessionKeys {
+    #[pyo3(get, set)]
+    pub kf: Vec<u8>,
+    #[pyo3(get, set)]
+    pub kb: Vec<u8>,
+    #[pyo3(get, set)]
+    pub sf: Vec<u8>,
+    #[pyo3(get, set)]
+    pub sb: Vec<u8>,
+    #[pyo3(get, set)]
+    pub counter_f: u32,
+    #[pyo3(get, set)]
+    pub counter_b: u32,
 }
 
 #[pyfunction]
