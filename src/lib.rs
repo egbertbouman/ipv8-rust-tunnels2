@@ -1,6 +1,6 @@
 use arc_swap::ArcSwap;
 use crypto::{Direction, SessionKeys};
-use pyo3::exceptions::PyException;
+use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::types::{PyDict, PyList, PySet};
 use pyo3::{create_exception, IntoPyObjectExt};
 use pyo3::{
@@ -44,7 +44,8 @@ mod util;
 #[macro_use]
 extern crate log;
 
-create_exception!(ipv8_rust_tunnels, RustError, PyException);
+create_exception!(ipv8_rust_tunnels, EndpointNotOpenError, PyException);
+create_exception!(ipv8_rust_tunnels, InvalidAddressError, PyValueError);
 
 #[pyclass]
 pub struct Endpoint {
@@ -597,7 +598,7 @@ impl Endpoint {
     fn get_routing_table(&self) -> Result<&RoutingTable, PyErr> {
         match &self.rt {
             Some(rt) => Ok(rt),
-            None => Err(RustError::new_err("Endpoint is not open")),
+            None => Err(EndpointNotOpenError::new_err("Endpoint is not open")),
         }
     }
 }
@@ -607,7 +608,8 @@ pub fn _rust(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = env_logger::try_init();
 
     m.add_class::<Endpoint>()?;
-    m.add("RustError", py.get_type::<RustError>())?;
+    m.add("EndpointNotOpenError", py.get_type::<EndpointNotOpenError>())?;
+    m.add("InvalidAddressError", py.get_type::<InvalidAddressError>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
     m.add_class::<RawPublicKey>()?;
@@ -710,6 +712,6 @@ fn parse_address(address: &Bound<'_, PyAny>) -> PyResult<SocketAddr> {
     let port = address.get_item(1)?.extract::<u16>()?;
     match ip.parse::<IpAddr>() {
         Ok(addr) => Ok(SocketAddr::new(addr, port)),
-        _ => Err(RustError::new_err("Invalid address")),
+        _ => Err(InvalidAddressError::new_err("Invalid address")),
     }
 }
