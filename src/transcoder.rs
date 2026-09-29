@@ -11,7 +11,8 @@ use pyo3::prelude::*;
 
 const CACHE_LIMIT: usize = 10;
 
-#[pyclass]
+#[pyclass(from_py_object)]
+#[derive(Clone)]
 pub struct TranscodeServer {
     api_url: String,
     cache: Arc<dashmap::DashMap<String, MediaMetadata>>,
@@ -355,7 +356,7 @@ impl TranscodeSession {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct MediaMetadata {
     #[pyo3(get, set)]
