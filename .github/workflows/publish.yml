@@ -82,7 +82,7 @@ jobs:
               CONF_FLAGS="--enable-cross-compile --cross-prefix=i686-linux-gnu- --arch=i686 --target-os=linux --extra-cflags=-fno-stack-protector"
           fi
 
-          git clone --branch n7.1 --depth 1 https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg_src
+          git clone --branch n7.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg_src
           cd /tmp/ffmpeg_src
 
           ./configure \
@@ -101,9 +101,7 @@ jobs:
             --enable-muxer=mp4 \
             --enable-decoder=h264,hevc,vp9,av1,aac,mp3,eac3 \
             --enable-encoder=aac \
-            --enable-parser=h264,hevc,vp9,av1,aac,mpegaudio \
-            --enable-nvenc \
-            --enable-vaapi
+            --enable-parser=h264,hevc,vp9,av1,aac,mpegaudio
 
           make -j$(nproc)
           make install
@@ -198,7 +196,7 @@ jobs:
             echo "Moved MSYS link"
           fi
 
-          git clone --branch n7.1 --depth 1 https://git.ffmpeg.org/ffmpeg.git ffmpeg_src
+          git clone --branch n7.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg_src
           cd ffmpeg_src
 
           ./configure \
@@ -273,7 +271,7 @@ jobs:
 
           brew install nasm pkg-config
 
-          git clone --branch n7.1 --depth 1 https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg_src
+          git clone --branch n7.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg_src
           cd /tmp/ffmpeg_src
 
           ./configure \
