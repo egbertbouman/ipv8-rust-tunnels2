@@ -10,6 +10,7 @@ pub mod peer;
 pub mod request_cache;
 pub mod task_manager;
 pub mod telemetry;
+pub mod transcoder;
 pub mod transport;
 pub mod util;
 
@@ -53,6 +54,9 @@ pub fn _rust(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("PEER_FLAG_EXIT_IPV8", community::routing::peer::PeerFlag::ExitIpv8 as u32)?;
     m.add("PEER_FLAG_SPEED_TEST", community::routing::peer::PeerFlag::SpeedTest as u32)?;
     m.add("PEER_FLAG_EXIT_HTTP", community::routing::peer::PeerFlag::ExitHttp as u32)?;
+
+    m.add_class::<transcoder::TranscodeServer>()?;
+    m.add_class::<transcoder::MediaMetadata>()?;
 
     Ok(())
 }

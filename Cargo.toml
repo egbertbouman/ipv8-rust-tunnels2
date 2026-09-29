@@ -59,6 +59,7 @@ openssl = { version = "0.10", features = ["vendored"] }
 flume = "0.12.0"
 dashmap = "6.2.1"
 bencode = "0.1.16"
+ffmpeg-next = { version = "9.0", default-features = false, features = ["codec", "format", "software-scaling"] }
 
 tracing = { version = "0.1", features = ["std"] }
 console-subscriber = "0.5.0"
