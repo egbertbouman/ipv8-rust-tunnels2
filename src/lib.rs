@@ -10,6 +10,7 @@ pub mod peer;
 pub mod request_cache;
 pub mod task_manager;
 pub mod telemetry;
+#[cfg(feature = "transcoder")]
 pub mod transcoder;
 pub mod transport;
 pub mod util;
@@ -55,8 +56,11 @@ pub fn _rust(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("PEER_FLAG_SPEED_TEST", community::routing::peer::PeerFlag::SpeedTest as u32)?;
     m.add("PEER_FLAG_EXIT_HTTP", community::routing::peer::PeerFlag::ExitHttp as u32)?;
 
-    m.add_class::<transcoder::TranscodeServer>()?;
-    m.add_class::<transcoder::MediaMetadata>()?;
+    #[cfg(all(feature = "python-extension", feature = "transcoder"))]
+    {
+        m.add_class::<transcoder::TranscodeServer>()?;
+        m.add_class::<transcoder::MediaMetadata>()?;
+    }
 
     Ok(())
 }
