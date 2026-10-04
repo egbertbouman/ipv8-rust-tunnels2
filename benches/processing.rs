@@ -12,6 +12,7 @@ use _rust::community::routing::circuit::CircuitType;
 use _rust::community::routing::peer::{PeerCache, PeerFlag};
 use _rust::community::serialization::{Raw, TestRequestPayload};
 use _rust::community::tunnels::TunnelCommunity;
+use _rust::task_manager::TaskManager;
 use _rust::transport::settings::EndpointSettings;
 use _rust::transport::stats::Stats;
 
@@ -32,7 +33,9 @@ fn build_network(num_nodes: u8) -> Vec<Arc<TunnelCommunity>> {
             _ => HashSet::from([PeerFlag::Relay]),
         };
         let addr: SocketAddr = format!("127.0.0.1:{}", i as u32 + 1000).parse().unwrap();
-        let (community, rx_outbound) = create_community(addr, flags, PeerCache::new());
+        let handle = tokio::runtime::Handle::try_current().unwrap();
+        let tm = TaskManager::new(handle);
+        let (community, rx_outbound) = create_community(addr, flags, PeerCache::new(), tm);
         network.insert(addr, community.clone());
         nodes.push(community.clone());
 

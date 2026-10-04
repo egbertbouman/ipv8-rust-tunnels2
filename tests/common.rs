@@ -73,10 +73,8 @@ pub fn create_community(
     addr: SocketAddr,
     flags: HashSet<PeerFlag>,
     peer_cache: PeerCache,
+    manager: TaskManager,
 ) -> (Arc<TunnelCommunity>, Receiver<(SocketAddr, Buffer)>) {
-    let handle = tokio::runtime::Handle::try_current().unwrap();
-    let manager = TaskManager::new(handle);
-
     let (tx_outbound, rx_outbound) = flume::bounded::<(SocketAddr, Buffer)>(4096);
 
     let mut prefix = [0x00; 22];
