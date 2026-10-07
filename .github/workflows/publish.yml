@@ -109,15 +109,10 @@ jobs:
         env:
           OPENSSL_STATIC: "1"
           FFMPEG_STATIC: "1"
-          RUSTFLAGS: "--cfg tokio_unstable"
+          RUSTFLAGS: "--cfg tokio_unstable -l z"
         with:
           target: ${{ matrix.target }}
-          docker-options: >-
-            -v /home/runner/ffmpeg_build:/opt/ffmpeg_build
-            -e FFMPEG_DIR=/opt/ffmpeg_build
-            -e FFMPEG_STATIC=1
-            -e PKG_CONFIG_PATH=/opt/ffmpeg_build/lib/pkgconfig
-            -e PKG_CONFIG_ALLOW_CROSS=1
+          docker-options: "-v /home/runner/ffmpeg_build:/opt/ffmpeg_build"
           before-script-linux: |
             if command -v yum > /dev/null; then
                 yum install -y perl-IPC-Cmd perl-Time-Piece perl-Data-Dumper nasm diffutils make git openssl-devel pkgconf-pkg-config clang clang-devel
