@@ -93,6 +93,7 @@ jobs:
             --enable-pic \
             --enable-gpl \
             --disable-everything \
+            --disable-zlib \
             --disable-doc \
             --enable-swscale \
             --enable-protocol=file,http,tcp \
@@ -109,7 +110,7 @@ jobs:
         env:
           OPENSSL_STATIC: "1"
           FFMPEG_STATIC: "1"
-          RUSTFLAGS: "--cfg tokio_unstable -l z"
+          RUSTFLAGS: "--cfg tokio_unstable"
         with:
           target: ${{ matrix.target }}
           docker-options: "-v /home/runner/ffmpeg_build:/opt/ffmpeg_build"
