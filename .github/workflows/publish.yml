@@ -91,7 +91,6 @@ jobs:
             --enable-static \
             --disable-shared \
             --enable-pic \
-            --enable-gpl \
             --disable-everything \
             --disable-zlib \
             --disable-doc \
@@ -206,7 +205,6 @@ jobs:
             --arch=x86_64 \
             --enable-static \
             --disable-shared \
-            --enable-gpl \
             --disable-everything \
             --disable-doc \
             --enable-swscale \
@@ -281,7 +279,6 @@ jobs:
             --enable-static \
             --disable-shared \
             --enable-pic \
-            --enable-gpl \
             --disable-everything \
             --disable-doc \
             --enable-swscale \
