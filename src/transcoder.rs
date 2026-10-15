@@ -265,6 +265,8 @@ impl TranscodeSession {
         let mut next_audio_pts: i64 = 0;
         let mut next_video_pts: i64 = 0;
         let mut seek_timestamp_offset: Option<i64> = None;
+        let mut last_video_sec = 0.0;
+        let mut last_audio_sec = 0.0;
 
         let video_enc_name =
             video_enc.codec().map(|c| c.name().to_owned()).unwrap_or_else(|| "unknown".to_owned());
@@ -278,17 +280,27 @@ impl TranscodeSession {
             let stream_index = packet.stream();
             let in_tb = input.stream(stream_index as usize).unwrap().time_base();
 
-            if stream_index == video_stream.index {
-                if let Some(pts) = packet.pts() {
-                    let time_in_video = pts as f64 * (in_tb.numerator() as f64 / in_tb.denominator() as f64);
-                    let time_since_seek = time_in_video - seek_start_sec;
-                    let time_since_start = stopwatch.elapsed().as_secs_f64();
+            if let Some(pts) = packet.pts() {
+                let time_in_video = pts as f64 * (in_tb.numerator() as f64 / in_tb.denominator() as f64);
+                let time_since_seek = (time_in_video - seek_start_sec).max(0.0);
 
-                    if time_since_seek > (time_since_start + burst_buffer_sec) {
-                        let time_to_sleep = time_since_seek - (time_since_start + burst_buffer_sec);
-                        if time_to_sleep > 0.001 {
-                            std::thread::sleep(std::time::Duration::from_secs_f64(time_to_sleep.min(0.1)));
-                        }
+                // The minimum timestamp is the maximum timestamp of where the player can be.
+                let current_ts = if stream_index == video_stream.index {
+                    last_video_sec = time_since_seek;
+                    last_video_sec.min(last_audio_sec)
+                } else if audio_stream_opt.as_ref().map_or(false, |s| stream_index == s.index) {
+                    last_audio_sec = time_since_seek;
+                    last_video_sec.min(last_audio_sec)
+                } else {
+                    last_video_sec.min(last_audio_sec)
+                };
+
+                let time_since_start = stopwatch.elapsed().as_secs_f64();
+
+                if current_ts > (time_since_start + burst_buffer_sec) {
+                    let time_to_sleep = current_ts - (time_since_start + burst_buffer_sec);
+                    if time_to_sleep > 0.001 {
+                        std::thread::sleep(std::time::Duration::from_secs_f64(time_to_sleep.min(0.01)));
                     }
                 }
             }
